@@ -15,15 +15,11 @@ from cuav.camera.cam_params import CameraParams
 
 mpstate = None
 
-# TODO refactor get_mav_param,scale_rc somewhere so it can be shared with mavproxy.py
-def get_mav_param(param, default=None):
-    '''return a EEPROM parameter value'''
-    return mpstate.mav_param.get(param, default)
 def scale_rc(servo, min, max, param):
     '''scale a PWM value'''
     # default to servo range of 1000 to 2000
-    min_pwm  = get_mav_param('%s_MIN'  % param, 0)
-    max_pwm  = get_mav_param('%s_MAX'  % param, 0)
+    min_pwm = mpstate.mav_param.get('%s_MIN' % param, 0)
+    max_pwm = mpstate.mav_param.get('%s_MAX' % param, 0)
     if min_pwm == 0 or max_pwm == 0:
         return 0
     if max_pwm == min_pwm:
