@@ -39,8 +39,8 @@ class module_state(object):
         self.pitch = 0
         self.yaw = 0
         self.mount_roll = 0
-        self.mount_pitch = 0
-        self.mount_yaw = 0
+        self.mount_tilt = 0
+        self.mount_pan = 0
         self.height = 0
         self.lat = 0
         self.lon = 0
@@ -54,8 +54,25 @@ class module_state(object):
               ('b', float, 1.0),
             ])
         self.update_col()
+
+        # these values are for ardupilot, from RC_Channel_aux.h
+        # but i feel there should be a more generally correct way of obtaining these constants
+        self.k_mount = {6:'PAN', 7:'TILT', 8:'ROLL'}
+        self.mnt_stab = {self.k_mount[n] : mpstate.mav_param.get('MNT_STAB_{0}'.format(self.k_mount[n]), 0) for n in self.k_mount}
+
+        # also not sure how to determine which channels are available
+        self.check_channels = [5, 6, 7, 8]
+        self.rc_function = {chan : mpstate.mav_param.get('RC{0}_FUNCTION'.format(chan), 0) for chan in self.check_channels}
+
+        self.update_mount_servo_channels()
     def update_col(self):
         self.col = tuple(int(255*c) for c in (self.settings.r, self.settings.g, self.settings.b))
+    def update_mount_servo_channels(self):
+        ''' Sets e.g. to {5:'PAN', 7:'ROLL'} where keys are servo channels. '''
+        self.channels = {ch : self.k_mount[self.rc_function[ch]]
+                              for ch in self.rc_function
+                                  if self.rc_function[ch] in self.k_mount and
+                                     self.mnt_stab[self.k_mount[self.rc_function[ch]]]}
 
 def name():
     '''return module name'''
@@ -117,21 +134,23 @@ def mavlink_packet(m):
             # (i.e. matches GLOBAL_POSITION_INT coords, and $IMHOME in sim_arduplane.sh)
             # and wploader is a bit off
             print 'home height changed from',old,'to',state.home_height
+    elif m.get_type() == 'PARAM_VALUE':
+        param_id = m.param_id[:m.param_id.find('\0')] # strip trailing nulls
+        if param_id in ['RC{0}_FUNCTION'.format(channel) for channel in state.check_channels]:
+            channel = int(param_id[2:param_id.find('_')])
+            state.rc_function[channel] = int(m.param_value) # is this dangerous?
+        elif param_id in ['MNT_STAB_{0}'.format(state.k_mount[n]) for n in state.k_mount]:
+            axis = param_id[param_id.rfind('_')+1:]
+            state.mnt_stab[axis] = m.param_value
+        state.update_mount_servo_channels()
     elif m.get_type() == 'SERVO_OUTPUT_RAW':
-        for (axis, attr) in [('ROLL', 'mount_roll'), ('TILT', 'mount_pitch'), ('PAN', 'mount_yaw')]:
-            channel = int(mpstate.mav_param.get('MNT_RC_IN_{0}'.format(axis), 0))
-            if mpstate.mav_param.get('MNT_STAB_{0}'.format(axis), 0) and channel:
-                # enabled stabilisation on this axis
-                # TODO just guessing that RC_IN_ROLL gives the servo number, but no idea if this is really the case
-                servo = 'servo{0}_raw'.format(channel)
-                centidegrees = scale_rc(getattr(m, servo),
-                                        mpstate.mav_param.get('MNT_ANGMIN_{0}'.format(axis[:3])),
-                                        mpstate.mav_param.get('MNT_ANGMAX_{0}'.format(axis[:3])),
-                                        param='RC{0}'.format(channel))
-                setattr(state, attr, centidegrees*0.01)
-        #state.mount_roll = min(max(-state.roll,-45),45)#TODO TMP
-        #state.mount_yaw = min(max(-state.yaw,-45),45)#TODO TMP
-        #state.mount_pitch = min(max(-state.pitch,-45),45)#TODO TMP
+        for (channel, axis) in state.channels.iteritems():
+            servo = 'servo{0}_raw'.format(channel)
+            centidegrees = scale_rc(getattr(m, servo),
+                                    mpstate.mav_param.get('MNT_ANGMIN_{0}'.format(axis[:3])),
+                                    mpstate.mav_param.get('MNT_ANGMAX_{0}'.format(axis[:3])),
+                                    param='RC{0}'.format(channel))
+            setattr(state, 'mount_{0}'.format(axis.lower()), centidegrees*0.01)
     else:
         return
     if mpstate.map: # if the map module is loaded, redraw polygon
@@ -139,7 +158,7 @@ def mavlink_packet(m):
         mpstate.map.add_object(mp_slipmap.SlipClearLayer('CameraView'))
 
         # camera view polygon determined by projecting corner pixels of the image onto the ground
-        pixel_positions = [cuav_util.pixel_position(px[0],px[1], state.height, state.pitch+state.mount_pitch, state.roll+state.mount_roll, state.yaw+state.mount_yaw, state.camera_params) for px in [(0,0), (state.camera_params.xresolution,0), (state.camera_params.xresolution,state.camera_params.yresolution), (0,state.camera_params.yresolution)]]
+        pixel_positions = [cuav_util.pixel_position(px[0],px[1], state.height, state.pitch+state.mount_tilt, state.roll+state.mount_roll, state.yaw+state.mount_pan, state.camera_params) for px in [(0,0), (state.camera_params.xresolution,0), (state.camera_params.xresolution,state.camera_params.yresolution), (0,state.camera_params.yresolution)]]
         if any(pixel_position is None for pixel_position in pixel_positions):
             # at least one of the pixels is not on the ground
             # so it doesn't make sense to try to draw the polygon
