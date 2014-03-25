@@ -6,6 +6,7 @@ Feb 2014
 '''
 
 import math
+import re
 from MAVProxy.modules.mavproxy_map import mp_slipmap
 from MAVProxy.modules.mavproxy_map import mp_elevation
 from MAVProxy.modules.lib import mp_util
@@ -14,6 +15,16 @@ from cuav.lib import cuav_util
 from cuav.camera.cam_params import CameraParams
 
 mpstate = None
+
+# for ardupilot, from RC_Channel_aux.h
+k_mount_pan  = 6
+k_mount_tilt = 7
+k_mount_roll = 8
+
+# documented in common.xml, can't find these constants in code
+k_scale_latlon = 1e-7
+k_scale_hdg = 1e-2
+k_scale_relative_alt = 1e-3
 
 def scale_rc(servo, min, max, param):
     '''scale a PWM value'''
@@ -53,20 +64,25 @@ class module_state(object):
               ('g', float, 0.5),
               ('b', float, 1.0),
             ])
-        self.update_col()
 
-        # these values are for ardupilot, from RC_Channel_aux.h
-        # but i feel there should be a more generally correct way of obtaining these constants
-        self.k_mount = {6:'PAN', 7:'TILT', 8:'ROLL'}
-        self.mnt_stab = {self.k_mount[n] : mpstate.mav_param.get('MNT_STAB_{0}'.format(self.k_mount[n]), 0) for n in self.k_mount}
+        # map rc function constants to the labels used in param keys
+        self.k_mount = {k_mount_pan:'PAN', k_mount_tilt:'TILT', k_mount_roll:'ROLL'}
 
-        # also not sure how to determine which channels are available
-        self.check_channels = [5, 6, 7, 8]
+        # assume any channel with RC*_FUNCTION might be used for stabilisation
+        r = re.compile(r'^RC(\d+)_FUNCTION$')
+        self.check_channels = [int(r.match(k).group(1)) for k in mpstate.mav_param if r.match(k)]
+
+        # monitor MNT_STAB_* and RC*_FUNCTION so we know how stabilisation is happening
+        self.mnt_stab = {axis : mpstate.mav_param.get('MNT_STAB_{0}'.format(axis), 0) for axis in self.k_mount.values()}
         self.rc_function = {chan : mpstate.mav_param.get('RC{0}_FUNCTION'.format(chan), 0) for chan in self.check_channels}
 
+        # initialise some variables, derived from stuff above
+        self.update_col()
         self.update_mount_servo_channels()
+
     def update_col(self):
         self.col = tuple(int(255*c) for c in (self.settings.r, self.settings.g, self.settings.b))
+
     def update_mount_servo_channels(self):
         ''' Sets e.g. to {5:'PAN', 7:'ROLL'} where keys are servo channels. '''
         self.channels = {ch : self.k_mount[self.rc_function[ch]]
@@ -105,24 +121,20 @@ def unload():
     '''unload module'''
     pass
 
-# documented in common.xml, can't find these constants in code
-scale_latlon = 1e-7
-scale_hdg = 1e-2
-scale_relative_alt = 1e-3
 def mavlink_packet(m):
     '''handle an incoming mavlink packet'''
     state = mpstate.cameraview_state
     if m.get_type() == 'GLOBAL_POSITION_INT':
-        state.lat, state.lon = m.lat*scale_latlon, m.lon*scale_latlon
-        state.hdg = m.hdg*scale_hdg
-        state.height = m.relative_alt*scale_relative_alt + state.home_height - state.elevation_model.GetElevation(state.lat, state.lon)
+        state.lat, state.lon = m.lat*k_scale_latlon, m.lon*k_scale_latlon
+        state.hdg = m.hdg*k_scale_hdg
+        state.height = m.relative_alt*k_scale_relative_alt + state.home_height - state.elevation_model.GetElevation(state.lat, state.lon)
     elif m.get_type() == 'ATTITUDE':
         state.roll, state.pitch, state.yaw = math.degrees(m.roll), math.degrees(m.pitch), math.degrees(m.yaw)
     elif m.get_type() in ['GPS_RAW', 'GPS_RAW_INT']:
         if mpstate.wp_state.wploader.count() > 0:
             home = mpstate.wp_state.wploader.wp(0).x, mpstate.wp_state.wploader.wp(0).y
         else:
-            home = [mpstate.master().field('HOME', c)*scale_latlon for c in ['lat', 'lon']]
+            home = [mpstate.master().field('HOME', c)*k_scale_latlon for c in ['lat', 'lon']]
         old = state.home_height # TODO TMP
         state.home_height = state.elevation_model.GetElevation(*home)
 
