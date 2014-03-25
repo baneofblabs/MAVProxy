@@ -96,7 +96,7 @@ def name():
 
 def description():
     '''return module description'''
-    return "camera view module"
+    return "camera field of view display"
 
 def cmd_cameraview(args):
     '''camera view commands'''
