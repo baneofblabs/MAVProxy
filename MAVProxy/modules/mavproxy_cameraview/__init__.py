@@ -66,6 +66,7 @@ class module_state(object):
         self.camera_params = CameraParams() # TODO how to get actual camera params
         self.settings = mp_settings.MPSettings(
             [ ('col', str, k_col),
+              ('target', int, 0),
             ])
 
         # map rc function constants to the labels used in param keys
@@ -187,3 +188,9 @@ def mavlink_packet(m):
         # draw new polygon
         mpstate.map.add_object(mp_slipmap.SlipPolygon('cameraview', gps_positions+[gps_positions[0]], # append first element to close polygon
                                                       layer='CameraView', linewidth=2, colour=state.col))
+
+        if state.settings.target:
+            centroid = tuple(len(gps_positions)**-1 * sum(gps_pos[n] for gps_pos in gps_positions) for n in [0,1])
+            mpstate.map.add_object(mp_slipmap.SlipIcon('icon', centroid,
+                 mpstate.map.icon('../../mavproxy_cameraview/data/target.png'), # TODO terrible hack
+                 layer='CameraView', rotation=state.yaw+state.mount_pan))

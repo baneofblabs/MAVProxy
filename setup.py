@@ -47,5 +47,6 @@ on how to use MAVProxy.''',
                'MAVProxy/modules/mavproxy_map/mp_tile.py'],
       package_data={'MAVProxy':
                     ['modules/mavproxy_map/data/*.jpg', 
-                     'modules/mavproxy_map/data/*.png']}
+                     'modules/mavproxy_map/data/*.png',
+                     'modules/mavproxy_cameraview/data/*.png']}
     )
