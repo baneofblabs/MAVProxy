@@ -7,6 +7,7 @@ Feb 2014
 
 import math
 import re
+import webcolors
 from MAVProxy.modules.mavproxy_map import mp_slipmap
 from MAVProxy.modules.mavproxy_map import mp_elevation
 from MAVProxy.modules.lib import mp_util
@@ -25,6 +26,10 @@ k_mount_roll = 8
 k_scale_latlon = 1e-7
 k_scale_hdg = 1e-2
 k_scale_relative_alt = 1e-3
+
+# default colour for drawing
+# (make sure this is something understood by webcolors module in update_col below)
+k_col = 'lightblue'
 
 def scale_rc(servo, min, max, param):
     '''scale a PWM value'''
@@ -60,9 +65,7 @@ class module_state(object):
         self.elevation_model = mp_elevation.ElevationModel()
         self.camera_params = CameraParams() # TODO how to get actual camera params
         self.settings = mp_settings.MPSettings(
-            [ ('r', float, 0.5),
-              ('g', float, 0.5),
-              ('b', float, 1.0),
+            [ ('col', str, k_col),
             ])
 
         # map rc function constants to the labels used in param keys
@@ -77,11 +80,18 @@ class module_state(object):
         self.rc_function = {chan : mpstate.mav_param.get('RC{0}_FUNCTION'.format(chan), 0) for chan in self.check_channels}
 
         # initialise some variables, derived from stuff above
-        self.update_col()
+        self.settings_updated()
         self.update_mount_servo_channels()
 
-    def update_col(self):
-        self.col = tuple(int(255*c) for c in (self.settings.r, self.settings.g, self.settings.b))
+    def settings_updated(self):
+        try:
+            self.col = webcolors.name_to_rgb(self.settings.col)
+        except ValueError:
+            try:
+                self.col = webcolors.hex_to_rgb(self.settings.col)
+            except ValueError:
+                # TODO is there a proper way to handle attempts to set invalid values
+                print 'Unrecognised colour "{0}".'.format(self.settings.col)
 
     def update_mount_servo_channels(self):
         ''' Sets e.g. to {5:'PAN', 7:'ROLL'} where keys are servo channels. '''
@@ -102,11 +112,8 @@ def cmd_cameraview(args):
     '''camera view commands'''
     state = mpstate.cameraview_state
     if args and args[0] == 'set':
-        if len(args) < 3:
-            state.settings.show_all()
-        else:
-            state.settings.set(args[1], args[2])
-            state.update_col()
+        state.settings.command(args[1:])
+        state.settings_updated()
     else:
         print 'usage: cameraview set'
 
